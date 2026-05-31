@@ -1,5 +1,6 @@
 import type { Datafile } from "@feathq/datafile-schema";
 import { evaluate } from "@feathq/feat-eval";
+import { buildAnonymousContext } from "./anonymous";
 import { Emitter } from "./emitter";
 import type {
   ChangeEvent,
@@ -44,7 +45,11 @@ export class FeatWebClient {
     }
     this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
     this.pollIntervalMs = config.pollIntervalMs ?? 30_000;
-    if (config.context) this.context = config.context;
+    if (config.context) {
+      this.context = config.context;
+    } else if (config.anonymous) {
+      this.context = buildAnonymousContext(config.anonymous);
+    }
   }
 
   // Resolves once the first datafile is in memory AND (if context was
