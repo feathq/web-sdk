@@ -1,6 +1,7 @@
 import type { Datafile } from "@feathq/datafile-schema";
 import { evaluate } from "@feathq/feat-eval";
 import { buildAnonymousContext } from "./anonymous";
+import { DatafileBroadcast } from "./broadcast";
 import { Emitter } from "./emitter";
 import { loadCachedDatafile, saveCachedDatafile } from "./persistence";
 import type {
@@ -33,6 +34,7 @@ export class FeatWebClient {
   private readyPromise: Promise<void> | null = null;
   private visibilityHandler: (() => void) | null = null;
   private emitter = new Emitter<FlagEventMap>();
+  private broadcast: DatafileBroadcast | null = null;
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private closed = false;
@@ -63,6 +65,14 @@ export class FeatWebClient {
         this.datafile = cached.datafile;
         this.etag = cached.etag;
       }
+    }
+    // Cross-tab sync defaults on. Sibling tabs adopt a fresh datafile
+    // without their own network call; we still publish on every fetch
+    // so a late-arriving tab catches up immediately.
+    if (config.crossTabSync !== false) {
+      this.broadcast = new DatafileBroadcast((msg) => {
+        void this.adoptFromBroadcast(msg.datafile, msg.etag);
+      });
     }
   }
 
@@ -160,6 +170,8 @@ export class FeatWebClient {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
       this.visibilityHandler = null;
     }
+    this.broadcast?.close();
+    this.broadcast = null;
     this.emitter.removeAll();
   }
 
@@ -226,8 +238,22 @@ export class FeatWebClient {
     if (this.config.cache) {
       saveCachedDatafile(this.config.cache, { datafile: next, etag: this.etag });
     }
+    this.broadcast?.publish(next, this.etag);
     await this.recomputeCache();
     return true;
+  }
+
+  // Sibling-tab handler. Only adopt if the broadcast carries a newer
+  // version (or we have nothing); old broadcasts can race with our own
+  // fresh fetches and we don't want to regress.
+  private async adoptFromBroadcast(datafile: Datafile, etag: string | null): Promise<void> {
+    if (this.datafile && datafile.version <= this.datafile.version) return;
+    this.datafile = datafile;
+    this.etag = etag;
+    if (this.config.cache) {
+      saveCachedDatafile(this.config.cache, { datafile, etag });
+    }
+    await this.recomputeCache();
   }
 
   // Pre-evaluate every flag in the datafile against the current context

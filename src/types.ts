@@ -37,6 +37,11 @@ export interface FeatWebClientConfig {
   // Background-poll interval in ms. Defaults to 30s, matching CF KV's
   // global-replication ceiling and the cadence the marketing site quotes.
   pollIntervalMs?: number;
+  // Cross-tab sync via BroadcastChannel. When a tab fetches a new
+  // datafile, sibling tabs adopt it without their own network call.
+  // Default on; set false for tests or if you want every tab to fetch
+  // independently.
+  crossTabSync?: boolean;
   // Fetch override for tests / non-browser hosts. Defaults to
   // globalThis.fetch.
   fetch?: typeof fetch;
