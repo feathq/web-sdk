@@ -1,11 +1,24 @@
 {
-  "name": "@feathq/feat-web-sdk",
+  "name": "@feathq/web-sdk",
   "version": "0.1.0",
-  "description": "feat feature-flag SDK for browsers. Polling client + sync evaluation cache. Pair with @feathq/openfeature-feat-web for OpenFeature.",
+  "description": "feat feature-flag SDK for browsers. Polling client + sync evaluation cache. Pair with @feathq/openfeature-web for OpenFeature.",
+  "keywords": [
+    "feature-flags",
+    "feature-toggles",
+    "openfeature",
+    "feat",
+    "browser",
+    "client-side"
+  ],
   "license": "MIT",
+  "author": "feat HQ <engineering@feat.so>",
+  "homepage": "https://feat.so",
   "repository": {
     "type": "git",
-    "url": "https://github.com/feathq/feat-control-plane-cf"
+    "url": "https://github.com/feathq/web-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/feathq/web-sdk/issues"
   },
   "type": "module",
   "packageManager": "yarn@4.14.1",
