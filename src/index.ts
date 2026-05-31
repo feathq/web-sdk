@@ -1,2 +1,11 @@
-// Public surface of @feathq/feat-web-sdk. Real exports land in PR-5+.
+export { FeatWebClient } from "./client";
+export type {
+  ContextKindObject,
+  Datafile,
+  EvalContext,
+  EvaluationResult,
+  FeatWebClientConfig,
+  Reason,
+} from "./types";
+
 export const SDK_VERSION = "0.1.0";
