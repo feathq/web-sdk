@@ -2,6 +2,7 @@ import type { Datafile } from "@feathq/datafile-schema";
 import { evaluate } from "@feathq/feat-eval";
 import { buildAnonymousContext } from "./anonymous";
 import { Emitter } from "./emitter";
+import { loadCachedDatafile, saveCachedDatafile } from "./persistence";
 import type {
   ChangeEvent,
   EvalContext,
@@ -49,6 +50,19 @@ export class FeatWebClient {
       this.context = config.context;
     } else if (config.anonymous) {
       this.context = buildAnonymousContext(config.anonymous);
+    }
+    // Seed order: explicit bootstrap > localStorage cache > nothing.
+    // Both populate the datafile + etag pre-fetch so a render before
+    // ready() resolves shows cached values rather than defaults.
+    if (config.bootstrap) {
+      this.datafile = config.bootstrap;
+      this.etag = config.bootstrap.etag;
+    } else if (config.cache) {
+      const cached = loadCachedDatafile(config.cache);
+      if (cached) {
+        this.datafile = cached.datafile;
+        this.etag = cached.etag;
+      }
     }
   }
 
@@ -151,6 +165,10 @@ export class FeatWebClient {
 
   private async bootstrap(): Promise<void> {
     try {
+      // If we already have a seeded datafile (bootstrap or cache), prime
+      // the eval cache immediately so the first render after ready() has
+      // real values, then refresh in the background to catch any drift.
+      if (this.datafile) await this.recomputeCache();
       await this.fetchDatafile();
       if (this.closed) return;
       this.startPolling();
@@ -205,6 +223,9 @@ export class FeatWebClient {
     const next = (await res.json()) as Datafile;
     this.datafile = next;
     this.etag = res.headers.get("etag");
+    if (this.config.cache) {
+      saveCachedDatafile(this.config.cache, { datafile: next, etag: this.etag });
+    }
     await this.recomputeCache();
     return true;
   }

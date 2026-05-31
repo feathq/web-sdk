@@ -6,10 +6,13 @@ export type {
 } from "@feathq/feat-eval";
 export type { Datafile } from "@feathq/datafile-schema";
 
+import type { Datafile } from "@feathq/datafile-schema";
 import type { EvalContext } from "@feathq/feat-eval";
 import type { AnonymousConfig } from "./anonymous";
+import type { DatafileCacheConfig } from "./persistence";
 
 export type { AnonymousConfig, AnonymousStorage } from "./anonymous";
+export type { DatafileCacheConfig, DatafileCacheStorage } from "./persistence";
 
 export interface FeatWebClientConfig {
   apiKey: string;
@@ -22,6 +25,15 @@ export interface FeatWebClientConfig {
   // provided, the client mints (or reads) a stable per-browser UUID and
   // uses { targetingKey: uuid, user: { key: uuid, anonymous: true } }.
   anonymous?: AnonymousConfig;
+  // Server-rendered datafile to seed the SDK with (SSR / RSC hydration).
+  // Skips the first network fetch so the first render has real values.
+  // Takes precedence over `cache`.
+  bootstrap?: Datafile;
+  // Opt-in persistence of the last-seen datafile so the next page load
+  // can render flag values immediately while the SDK refreshes in the
+  // background. Default off so targeting rules aren't cached on shared
+  // browsers without an explicit decision by the integrator.
+  cache?: DatafileCacheConfig;
   // Background-poll interval in ms. Defaults to 30s, matching CF KV's
   // global-replication ceiling and the cadence the marketing site quotes.
   pollIntervalMs?: number;
