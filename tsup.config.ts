@@ -1,14 +1,13 @@
 import { defineConfig } from "tsup";
 
-// Bundles @feathq/feat-eval and @feathq/datafile-schema into the published
-// output. They're not on npm yet (private workspace deps); once they are,
-// move them to `external` and add as real dependencies. tsup externalizes
-// `dependencies` by default, so we explicitly noExternal them.
+// Bundles the internal eval engine and schema packages into the published
+// output (they're not on npm yet). Sourcemaps are disabled so consumers
+// don't get back the original comments or internal package paths.
 export default defineConfig({
   entry: ["src/index.ts"],
   format: ["esm", "cjs"],
   dts: true,
-  sourcemap: true,
+  sourcemap: false,
   clean: true,
   target: "es2020",
   treeshake: true,

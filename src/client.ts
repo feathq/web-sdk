@@ -13,15 +13,18 @@ import type {
 } from "./types";
 
 const CLIENT_SIDE_PREFIX = "feat_cs_";
+const MIN_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const MAX_DATAFILE_BYTES = 10 * 1024 * 1024;
 
 // Browser polling client with a synchronous evaluation cache.
 //
 // Sync surface (`getValue`, `getDetail`, `allFlags`) reads from a Map
 // that's pre-computed every time the datafile or the context changes.
-// This is what makes the OpenFeature web-sdk Provider in PR-11 possible:
-// that spec requires sync `resolve*Evaluation`, but our eval engine is
-// async (Web Crypto SHA-1). Pre-eval-into-cache is the standard fix
-// (LaunchDarkly and Optimizely web SDKs do the same thing).
+// This is what makes the OpenFeature web-sdk Provider possible: that
+// spec requires sync `resolve*Evaluation`, but the underlying eval
+// engine is async (Web Crypto SHA-1). Pre-evaluating into a cache
+// bridges the gap.
 //
 // Reactive `change` events fire per-flag when a value flips, so the UI
 // or framework adapter can rerender without polling the SDK.
@@ -46,8 +49,12 @@ export class FeatWebClient {
           "Server and mobile keys must never ship in browser code.",
       );
     }
+    assertHttpsUrl(config.dataPlaneUrl);
     this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
-    this.pollIntervalMs = config.pollIntervalMs ?? 30_000;
+    this.pollIntervalMs = Math.max(
+      config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+      MIN_POLL_INTERVAL_MS,
+    );
     if (config.context) {
       this.context = config.context;
     } else if (config.anonymous) {
@@ -108,7 +115,7 @@ export class FeatWebClient {
       variationId: null,
       reason: "ERROR",
       errorMessage: this.context
-        ? `flag "${flagKey}" not found`
+        ? "flag could not be evaluated"
         : "client not ready: call setContext() and await ready()",
     };
   }
@@ -137,8 +144,7 @@ export class FeatWebClient {
     return typeof v === "object" && v !== null ? (v as T) : defaultValue;
   }
 
-  // Snapshot of the current sync cache. Useful for devtools/debug panels
-  // and for OpenFeature's `getProviderEvents` style introspection.
+  // Snapshot of the current sync cache. Useful for devtools and debug panels.
   allFlags(): ReadonlyMap<string, EvaluationResult> {
     return new Map(this.cache);
   }
@@ -195,8 +201,8 @@ export class FeatWebClient {
   private startPolling(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = setInterval(() => {
-      void this.fetchDatafile().catch((err) => {
-        console.warn("feat-web-sdk: background poll failed", err);
+      void this.fetchDatafile().catch((err: unknown) => {
+        console.warn("feat: background poll failed:", messageOf(err));
       });
     }, this.pollIntervalMs);
   }
@@ -211,8 +217,8 @@ export class FeatWebClient {
         }
         return;
       }
-      void this.fetchDatafile().catch((err) => {
-        console.warn("feat-web-sdk: visibility refresh failed", err);
+      void this.fetchDatafile().catch((err: unknown) => {
+        console.warn("feat: visibility refresh failed:", messageOf(err));
       });
       if (!this.timer) this.startPolling();
     };
@@ -230,7 +236,11 @@ export class FeatWebClient {
     if (res.status === 404) return false;
     if (res.status === 429) return false;
     if (!res.ok) {
-      throw new Error(`fetchDatafile failed: ${res.status} ${res.statusText}`);
+      throw new Error(`fetchDatafile failed: ${res.status}`);
+    }
+    const lengthHeader = res.headers.get("content-length");
+    if (lengthHeader && Number(lengthHeader) > MAX_DATAFILE_BYTES) {
+      throw new Error("datafile exceeds maximum allowed size");
     }
     const next = (await res.json()) as Datafile;
     this.datafile = next;
@@ -274,8 +284,8 @@ export class FeatWebClient {
     this.cache = next;
     // Emit a change event per flag whose evaluated value flipped. New
     // flags fire too (old undefined -> new value). Removed flags fire as
-    // newValue=null. Compared by JSON.stringify for deep-eq on JSON
-    // values; this is the same coarse-grain check LD/Optimizely use.
+    // newValue=null. Compared via JSON.stringify, which is the coarse-
+    // grained deep-eq the rest of the SDK assumes for JSON values.
     for (const [flagKey, newResult] of next) {
       const oldResult = prev.get(flagKey);
       if (!oldResult || !sameValue(oldResult.value, newResult.value)) {
@@ -305,11 +315,29 @@ export class FeatWebClient {
 
 function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // Cheap deep-eq for JSON values. Cycles aren't a concern: the engine
-  // only emits values from the datafile, which is itself JSON-serialized.
   try {
     return JSON.stringify(a) === JSON.stringify(b);
   } catch {
     return false;
   }
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Allow https:// and loopback over http for local dev / tests. Anything
+// else gets rejected so a misconfigured consumer can't accidentally send
+// the bearer token over plaintext.
+function assertHttpsUrl(url: string): void {
+  try {
+    const u = new URL(url);
+    if (u.protocol === "https:") return;
+    if (u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1")) {
+      return;
+    }
+  } catch {
+    // fall through to throw
+  }
+  throw new Error("dataPlaneUrl must use https:// (http://localhost allowed for tests)");
 }

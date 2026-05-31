@@ -34,8 +34,9 @@ export interface FeatWebClientConfig {
   // background. Default off so targeting rules aren't cached on shared
   // browsers without an explicit decision by the integrator.
   cache?: DatafileCacheConfig;
-  // Background-poll interval in ms. Defaults to 30s, matching CF KV's
-  // global-replication ceiling and the cadence the marketing site quotes.
+  // Background-poll interval in ms. Defaults to 30s. Floored at 5s to
+  // protect both the SDK consumer and the feat endpoint from accidental
+  // hot loops.
   pollIntervalMs?: number;
   // Cross-tab sync via BroadcastChannel. When a tab fetches a new
   // datafile, sibling tabs adopt it without their own network call.
