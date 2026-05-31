@@ -45,11 +45,11 @@
     "test": "vitest --run"
   },
   "dependencies": {
-    "@feathq/datafile-schema": "portal:../../feat-data-plane/packages/datafile-schema",
-    "@feathq/feat-eval": "portal:../../feat-data-plane/packages/feat-eval"
+    "@feathq/datafile-schema": "portal:../../packages/datafile-schema",
+    "@feathq/feat-eval": "portal:../../packages/feat-eval"
   },
   "resolutions": {
-    "@feathq/datafile-schema@workspace:*": "portal:../../feat-data-plane/packages/datafile-schema"
+    "@feathq/datafile-schema@workspace:*": "portal:../../packages/datafile-schema"
   },
   "devDependencies": {
     "@types/node": "^25.6.2",
