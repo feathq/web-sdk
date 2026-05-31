@@ -215,15 +215,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@feathq/datafile-schema@portal:../../packages/datafile-schema::locator=%40feathq%2Fweb-sdk%40workspace%3A.":
+"@feathq/datafile-schema@portal:../../feat-packages/datafile-schema::locator=%40feathq%2Fweb-sdk%40workspace%3A.":
   version: 0.0.0-use.local
-  resolution: "@feathq/datafile-schema@portal:../../packages/datafile-schema::locator=%40feathq%2Fweb-sdk%40workspace%3A."
+  resolution: "@feathq/datafile-schema@portal:../../feat-packages/datafile-schema::locator=%40feathq%2Fweb-sdk%40workspace%3A."
   languageName: node
   linkType: soft
 
-"@feathq/feat-eval@portal:../../packages/feat-eval::locator=%40feathq%2Fweb-sdk%40workspace%3A.":
+"@feathq/feat-eval@portal:../../feat-packages/feat-eval::locator=%40feathq%2Fweb-sdk%40workspace%3A.":
   version: 0.0.0-use.local
-  resolution: "@feathq/feat-eval@portal:../../packages/feat-eval::locator=%40feathq%2Fweb-sdk%40workspace%3A."
+  resolution: "@feathq/feat-eval@portal:../../feat-packages/feat-eval::locator=%40feathq%2Fweb-sdk%40workspace%3A."
   dependencies:
     "@feathq/datafile-schema": "workspace:^"
   languageName: node
