@@ -1,10 +1,12 @@
 export { FeatWebClient } from "./client";
 export type {
+  ChangeEvent,
   ContextKindObject,
   Datafile,
   EvalContext,
   EvaluationResult,
   FeatWebClientConfig,
+  FlagEventMap,
   Reason,
 } from "./types";
 
