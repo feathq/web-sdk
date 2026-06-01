@@ -48,11 +48,6 @@
     "@feathq/datafile-schema": "^0.1.0",
     "@feathq/feat-eval": "^0.1.0"
   },
-  "resolutions": {
-    "@feathq/datafile-schema": "portal:../../feat-packages/datafile-schema",
-    "@feathq/datafile-schema@workspace:*": "portal:../../feat-packages/datafile-schema",
-    "@feathq/feat-eval": "portal:../../feat-packages/feat-eval"
-  },
   "devDependencies": {
     "@types/node": "^25.6.2",
     "happy-dom": "^15.11.7",
