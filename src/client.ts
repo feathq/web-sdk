@@ -230,9 +230,7 @@ export class FeatWebClient {
     const url = `${this.config.dataPlaneUrl.replace(/\/$/, "")}/sdk/v1/datafile`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.config.apiKey}`,
-      // Browsers strip User-Agent overrides on fetch (it's a forbidden
-      // header). X-Feat-Sdk gives us an identifier in data-plane logs
-      // without fighting the platform.
+      // Custom header because browsers forbid setting User-Agent on fetch.
       "X-Feat-Sdk": `web/${SDK_VERSION}`,
     };
     if (this.etag) headers["If-None-Match"] = this.etag;
