@@ -4,6 +4,7 @@ import { buildAnonymousContext } from "./anonymous";
 import { DatafileBroadcast } from "./broadcast";
 import { Emitter } from "./emitter";
 import { loadCachedDatafile, saveCachedDatafile } from "./persistence";
+import { SDK_VERSION } from "./version";
 import type {
   ChangeEvent,
   EvalContext,
@@ -229,6 +230,8 @@ export class FeatWebClient {
     const url = `${this.config.dataPlaneUrl.replace(/\/$/, "")}/sdk/v1/datafile`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.config.apiKey}`,
+      // Custom header because browsers forbid setting User-Agent on fetch.
+      "X-Feat-Sdk": `web/${SDK_VERSION}`,
     };
     if (this.etag) headers["If-None-Match"] = this.etag;
     const res = await this.fetchImpl(url, { method: "GET", headers });
