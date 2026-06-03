@@ -1,12 +1,12 @@
 <p align="center">
   <a href="https://feat.so">
-    <img src="https://feat.so/logo/wordmark.png" alt="feat.so" width="200" />
+    <img src="https://feat.so/logo/wordmark.png" alt="feat.so" width="320" />
   </a>
 </p>
 
 ---
 
-# @feathq/web-sdk
+# feat Web SDK
 
 Browser / client-side SDK for [feat](https://feat.so) feature flags. Polls a per-environment datafile to the browser and evaluates flags locally with a synchronous cache.
 
