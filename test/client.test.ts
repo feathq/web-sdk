@@ -85,7 +85,7 @@ describe("FeatWebClient", () => {
       () =>
         new FeatWebClient({
           apiKey: "feat_sdk_serverkey",
-          dataPlaneUrl: "https://dp.example.com",
+          url: "https://dp.example.com",
         }),
     ).toThrow(/client_side_id/);
   });
@@ -93,7 +93,7 @@ describe("FeatWebClient", () => {
   it("ready() resolves after first fetch", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       fetch: makeFetch([
         { status: 200, body: JSON.stringify(BASE_DATAFILE), etag: BASE_DATAFILE.etag },
       ]),
@@ -106,7 +106,7 @@ describe("FeatWebClient", () => {
   it("getValue returns default + ERROR before context is set", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
     await client.ready();
@@ -118,7 +118,7 @@ describe("FeatWebClient", () => {
   it("populates sync cache once both datafile and context are present", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
@@ -131,7 +131,7 @@ describe("FeatWebClient", () => {
   it("setContext after ready re-evaluates", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
     await client.ready();
@@ -144,7 +144,7 @@ describe("FeatWebClient", () => {
   it("emits change event when a flag's value flips", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([
         { status: 200, body: JSON.stringify(BASE_DATAFILE) },
@@ -170,7 +170,7 @@ describe("FeatWebClient", () => {
   it("does NOT emit change event when value is unchanged", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([
         { status: 200, body: JSON.stringify(BASE_DATAFILE) },
@@ -188,7 +188,7 @@ describe("FeatWebClient", () => {
   it("emits ready event on bootstrap", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
     const fired: boolean[] = [];
@@ -204,7 +204,7 @@ describe("FeatWebClient", () => {
     };
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       fetch: failingFetch,
     });
     const errs: Error[] = [];
@@ -217,7 +217,7 @@ describe("FeatWebClient", () => {
   it("getBooleanValue / getStringValue coerce by type", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
@@ -232,7 +232,7 @@ describe("FeatWebClient", () => {
   it("allFlags returns a snapshot of the cache", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
@@ -246,7 +246,7 @@ describe("FeatWebClient", () => {
   it("304 is a no-op (no change event, datafile preserved)", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([
         { status: 200, body: JSON.stringify(BASE_DATAFILE), etag: BASE_DATAFILE.etag },
@@ -265,7 +265,7 @@ describe("FeatWebClient", () => {
   it("close() clears the polling timer and visibility listener", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_abc",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       fetch: makeFetch([{ status: 200, body: JSON.stringify(BASE_DATAFILE) }]),
     });
     await client.ready();
