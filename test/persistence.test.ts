@@ -55,7 +55,7 @@ describe("bootstrap + localStorage cache", () => {
   it("bootstrap seeds the datafile so getValue works before the fetch", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       bootstrap: BASE_DATAFILE,
       // fetch hangs (never resolves) to prove we don't wait on it.
@@ -74,7 +74,7 @@ describe("bootstrap + localStorage cache", () => {
   it("localStorage cache: second client picks up the saved datafile", async () => {
     const first = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       cache: { storage: "localStorage" },
       fetch: passingFetch(),
@@ -85,7 +85,7 @@ describe("bootstrap + localStorage cache", () => {
 
     const second = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       cache: { storage: "localStorage" },
       fetch: (() => new Promise(() => {})) as unknown as typeof fetch,
@@ -117,7 +117,7 @@ describe("bootstrap + localStorage cache", () => {
     );
     const client = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       bootstrap: BASE_DATAFILE,
       cache: { storage: "localStorage" },
@@ -133,7 +133,7 @@ describe("bootstrap + localStorage cache", () => {
   it("a missing cache key just falls through to fetch", async () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       cache: { storage: "localStorage" },
       fetch: passingFetch(),

@@ -65,7 +65,7 @@ describe("anonymous context", () => {
   it("explicit context overrides anonymous config", () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "explicit" },
       anonymous: { storage: "localStorage" },
       fetch: passingFetch(),
@@ -77,7 +77,7 @@ describe("anonymous context", () => {
   it("client wires anonymous context when none provided", () => {
     const client = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       anonymous: { storage: "localStorage" },
       fetch: passingFetch(),
     });

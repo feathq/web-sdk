@@ -17,6 +17,7 @@ const CLIENT_SIDE_PREFIX = "feat_cs_";
 const MIN_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const MAX_DATAFILE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_URL = "https://data-01.feat.so";
 
 // Browser polling client with a synchronous evaluation cache.
 //
@@ -41,6 +42,7 @@ export class FeatWebClient {
   private broadcast: DatafileBroadcast | null = null;
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
+  private readonly url: string;
   private closed = false;
 
   constructor(private readonly config: FeatWebClientConfig) {
@@ -50,7 +52,8 @@ export class FeatWebClient {
           "Server and mobile keys must never ship in browser code.",
       );
     }
-    assertHttpsUrl(config.dataPlaneUrl);
+    this.url = config.url ?? DEFAULT_URL;
+    assertHttpsUrl(this.url);
     this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
     this.pollIntervalMs = Math.max(
       config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
@@ -227,7 +230,7 @@ export class FeatWebClient {
   }
 
   private async fetchDatafile(): Promise<boolean> {
-    const url = `${this.config.dataPlaneUrl.replace(/\/$/, "")}/sdk/v1/datafile`;
+    const url = `${this.url.replace(/\/$/, "")}/sdk/v1/datafile`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.config.apiKey}`,
       // Custom header because browsers forbid setting User-Agent on fetch.
@@ -342,5 +345,5 @@ function assertHttpsUrl(url: string): void {
   } catch {
     // fall through to throw
   }
-  throw new Error("dataPlaneUrl must use https:// (http://localhost allowed for tests)");
+  throw new Error("url must use https:// (http://localhost allowed for tests)");
 }

@@ -27,7 +27,7 @@ import { FeatWebClient } from "@feathq/web-sdk";
 
 const client = new FeatWebClient({
   apiKey: "feat_cs_…",                       // client-side ID key
-  dataPlaneUrl: "https://data.feat.so",
+  url: "https://data-01.feat.so",            // optional; this is the default
   anonymous: { storage: "localStorage" },    // optional: auto-mint a stable anonymous user
   cache: { storage: "localStorage" },        // optional: warm cache across page loads
 });
@@ -62,7 +62,7 @@ import { OpenFeature } from "@openfeature/web-sdk";
 import { FeatWebClient } from "@feathq/web-sdk";
 import { FeatWebProvider } from "@feathq/openfeature-web";
 
-const featClient = new FeatWebClient({ apiKey, dataPlaneUrl });
+const featClient = new FeatWebClient({ apiKey });
 await OpenFeature.setProviderAndWait(new FeatWebProvider(featClient));
 await OpenFeature.setContext({ targetingKey: "user-123" });
 
@@ -74,7 +74,7 @@ const enabled = OpenFeature.getClient().getBooleanValue("checkout-v2", false);
 Fetch the datafile on the server and pass it through to the client to skip the first round trip:
 
 ```ts
-new FeatWebClient({ apiKey, dataPlaneUrl, bootstrap: serverProvidedDatafile });
+new FeatWebClient({ apiKey, bootstrap: serverProvidedDatafile });
 ```
 
 ## How it works
@@ -83,7 +83,7 @@ new FeatWebClient({ apiKey, dataPlaneUrl, bootstrap: serverProvidedDatafile });
 - Polls every 30 s by default; pauses while the tab is hidden and force-refreshes on visibility restore. Floored at 5 s.
 - Cross-tab `BroadcastChannel` sync: when one tab fetches a new datafile, sibling tabs adopt it without their own network call.
 - 304-aware via `ETag` / `If-None-Match`.
-- `dataPlaneUrl` must use `https://` (the constructor rejects plaintext URLs except `http://localhost` for tests).
+- `url` must use `https://` if you override it (the constructor rejects plaintext URLs except `http://localhost` for tests).
 
 ## Security notes
 

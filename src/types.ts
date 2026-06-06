@@ -16,7 +16,9 @@ export type { DatafileCacheConfig, DatafileCacheStorage } from "./persistence";
 
 export interface FeatWebClientConfig {
   apiKey: string;
-  dataPlaneUrl: string;
+  // Optional. Defaults to the production endpoint. Override if you have
+  // been pointed at a different region or a staging endpoint.
+  url?: string;
   // Initial evaluation context. Can also be set later via setContext().
   // The cache stays empty (and getValue returns the default) until both
   // datafile and context are present.

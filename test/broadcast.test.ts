@@ -70,7 +70,7 @@ describe("cross-tab BroadcastChannel sync", () => {
     // broadcast it would never have a datafile to evaluate from.
     const sibling = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: (() => new Promise(() => {})) as unknown as typeof fetch,
     });
@@ -78,7 +78,7 @@ describe("cross-tab BroadcastChannel sync", () => {
 
     const publisher = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([{ status: 200, body: JSON.stringify(V1) }]),
     });
@@ -96,7 +96,7 @@ describe("cross-tab BroadcastChannel sync", () => {
   it("does not adopt an older-version broadcast", async () => {
     const tab = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([{ status: 200, body: JSON.stringify(V2) }]),
     });
@@ -105,7 +105,7 @@ describe("cross-tab BroadcastChannel sync", () => {
 
     const olderTab = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       fetch: makeFetch([{ status: 200, body: JSON.stringify(V1) }]),
     });
@@ -122,7 +122,7 @@ describe("cross-tab BroadcastChannel sync", () => {
   it("crossTabSync: false suppresses both publish and subscribe", async () => {
     const sibling = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       crossTabSync: false,
       fetch: (() => new Promise(() => {})) as unknown as typeof fetch,
@@ -130,7 +130,7 @@ describe("cross-tab BroadcastChannel sync", () => {
     void sibling.ready();
     const publisher = new FeatWebClient({
       apiKey: "feat_cs_x",
-      dataPlaneUrl: "https://dp.example.com",
+      url: "https://dp.example.com",
       context: { targetingKey: "u" },
       crossTabSync: false,
       fetch: makeFetch([{ status: 200, body: JSON.stringify(V1) }]),
