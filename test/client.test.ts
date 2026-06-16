@@ -274,3 +274,76 @@ describe("FeatWebClient", () => {
     expect(removeSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
   });
 });
+
+// Routes datafile fetches to BASE_DATAFILE and records POSTs to the usage
+// events endpoint so the summarizer wiring can be asserted end to end.
+function routingFetch(eventsCalls: { contexts: { kind: string; key: string }[] }[]): typeof fetch {
+  return (async (url: string, init: RequestInit) => {
+    if (String(url).includes("/sdk/v1/events")) {
+      eventsCalls.push(JSON.parse(init.body as string));
+      return { status: 202, ok: true, statusText: "202", headers: { get: () => null } };
+    }
+    return {
+      status: 200,
+      ok: true,
+      statusText: "ok",
+      headers: { get: () => null },
+      json: async () => BASE_DATAFILE,
+    };
+  }) as unknown as typeof fetch;
+}
+
+describe("FeatWebClient usage events", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("reports the initial anonymous context on close", async () => {
+    const eventsCalls: { contexts: { kind: string; key: string }[] }[] = [];
+    const client = new FeatWebClient({
+      apiKey: "feat_cs_abc",
+      url: "https://dp.example.com",
+      anonymous: { storage: "memory" },
+      crossTabSync: false,
+      fetch: routingFetch(eventsCalls),
+    });
+    await client.ready();
+    client.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(eventsCalls).toHaveLength(1);
+    expect(eventsCalls[0]?.contexts[0]?.kind).toBe("user");
+  });
+
+  it("reports a context set via setContext on the flush interval", async () => {
+    const eventsCalls: { contexts: { kind: string; key: string }[] }[] = [];
+    const client = new FeatWebClient({
+      apiKey: "feat_cs_abc",
+      url: "https://dp.example.com",
+      crossTabSync: false,
+      eventsFlushIntervalMs: 5_000,
+      fetch: routingFetch(eventsCalls),
+    });
+    await client.ready();
+    await client.setContext({ user: { key: "alice" } });
+    await vi.advanceTimersByTimeAsync(5_000);
+    const keys = eventsCalls.flatMap((c) => c.contexts.map((p) => p.key));
+    expect(keys).toContain("alice");
+    client.close();
+  });
+
+  it("sends no usage events when events is false", async () => {
+    const eventsCalls: { contexts: { kind: string; key: string }[] }[] = [];
+    const client = new FeatWebClient({
+      apiKey: "feat_cs_abc",
+      url: "https://dp.example.com",
+      anonymous: { storage: "memory" },
+      events: false,
+      crossTabSync: false,
+      fetch: routingFetch(eventsCalls),
+    });
+    await client.ready();
+    await client.setContext({ user: { key: "alice" } });
+    client.close();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(eventsCalls).toHaveLength(0);
+  });
+});
