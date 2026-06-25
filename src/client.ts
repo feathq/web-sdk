@@ -3,6 +3,11 @@ import { evaluate } from "@feathq/feat-eval";
 import { buildAnonymousContext } from "./anonymous";
 import { DatafileBroadcast } from "./broadcast";
 import { Emitter } from "./emitter";
+import {
+  DEFAULT_EVENTS_FLUSH_INTERVAL_MS,
+  EventSummarizer,
+  MIN_EVENTS_FLUSH_INTERVAL_MS,
+} from "./events";
 import { loadCachedDatafile, saveCachedDatafile } from "./persistence";
 import { SDK_VERSION } from "./version";
 import type {
@@ -40,6 +45,7 @@ export class FeatWebClient {
   private visibilityHandler: (() => void) | null = null;
   private emitter = new Emitter<FlagEventMap>();
   private broadcast: DatafileBroadcast | null = null;
+  private readonly summarizer: EventSummarizer | null;
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly url: string;
@@ -59,11 +65,29 @@ export class FeatWebClient {
       config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
       MIN_POLL_INTERVAL_MS,
     );
+    this.summarizer =
+      config.events === false
+        ? null
+        : new EventSummarizer({
+            url: this.url,
+            apiKey: config.apiKey,
+            fetchImpl: this.fetchImpl,
+            sdkHeader: `web/${SDK_VERSION}`,
+            flushIntervalMs: Math.max(
+              config.eventsFlushIntervalMs ?? DEFAULT_EVENTS_FLUSH_INTERVAL_MS,
+              MIN_EVENTS_FLUSH_INTERVAL_MS,
+            ),
+          });
     if (config.context) {
       this.context = config.context;
     } else if (config.anonymous) {
       this.context = buildAnonymousContext(config.anonymous);
     }
+    // Record the initial end-user context for MAU metering. The browser
+    // SDK's context IS the end user, so each distinct context this client
+    // is given is one active user to report. Later changes go through
+    // setContext(), which records too.
+    if (this.context) this.summarizer?.record(this.context);
     // Seed order: explicit bootstrap > localStorage cache > nothing.
     // Both populate the datafile + etag pre-fetch so a render before
     // ready() resolves shows cached values rather than defaults.
@@ -101,6 +125,8 @@ export class FeatWebClient {
   // OpenFeature's `onContextChange` lifecycle hook bridges to this.
   async setContext(context: EvalContext): Promise<void> {
     this.context = context;
+    // Each distinct end user this browser identifies as is one active user.
+    this.summarizer?.record(context);
     await this.recomputeCache();
   }
 
@@ -182,6 +208,7 @@ export class FeatWebClient {
     }
     this.broadcast?.close();
     this.broadcast = null;
+    this.summarizer?.close();
     this.emitter.removeAll();
   }
 
@@ -195,6 +222,7 @@ export class FeatWebClient {
       if (this.closed) return;
       this.startPolling();
       this.attachVisibilityHandler();
+      this.summarizer?.start();
       this.emitter.emit("ready", undefined);
     } catch (err) {
       this.emitter.emit("failed", err instanceof Error ? err : new Error(String(err)));

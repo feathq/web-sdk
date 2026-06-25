@@ -45,6 +45,14 @@ export interface FeatWebClientConfig {
   // Default on; set false for tests or if you want every tab to fetch
   // independently.
   crossTabSync?: boolean;
+  // Usage event reporting. The SDK summarizes the contexts it evaluates
+  // (one per end user this browser represents) and flushes them to the
+  // platform so they count toward your MAU. Defaults to on; set false to
+  // disable entirely (e.g. self-hosted or test runs).
+  events?: boolean;
+  // How often, in ms, to flush summarized contexts. Defaults to 60s,
+  // floored at 5s. Ignored when events is false.
+  eventsFlushIntervalMs?: number;
   // Fetch override for tests / non-browser hosts. Defaults to
   // globalThis.fetch.
   fetch?: typeof fetch;
