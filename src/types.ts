@@ -10,9 +10,11 @@ import type { Datafile } from "@feathq/datafile-schema";
 import type { EvalContext } from "@feathq/feat-eval";
 import type { AnonymousConfig } from "./anonymous";
 import type { DatafileCacheConfig } from "./persistence";
+import type { EventSourceConstructor } from "./streaming";
 
 export type { AnonymousConfig, AnonymousStorage } from "./anonymous";
 export type { DatafileCacheConfig, DatafileCacheStorage } from "./persistence";
+export type { EventSourceConstructor } from "./streaming";
 
 export interface FeatWebClientConfig {
   apiKey: string;
@@ -56,6 +58,20 @@ export interface FeatWebClientConfig {
   // Fetch override for tests / non-browser hosts. Defaults to
   // globalThis.fetch.
   fetch?: typeof fetch;
+  // Live datafile streaming over Server-Sent Events. The data plane pushes
+  // the full datafile on every change and the SDK adopts it in version order
+  // (no HTTP refetch), so `change` events fire near-instantly instead of on
+  // the poll interval. Three modes:
+  //   undefined (default) - streaming follows subscription: the stream opens
+  //     when the first `change` listener is added and closes when the last
+  //     one is removed, so a page that never listens pays nothing.
+  //   true  - always stream, opening once the client is ready.
+  //   false - never stream.
+  // Polling stays on as the safety net in every mode.
+  streaming?: boolean;
+  // EventSource override for tests / non-browser hosts. Defaults to
+  // globalThis.EventSource.
+  eventSource?: EventSourceConstructor;
 }
 
 export interface ChangeEvent {

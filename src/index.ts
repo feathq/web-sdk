@@ -5,6 +5,7 @@ export type {
   Datafile,
   EvalContext,
   EvaluationResult,
+  EventSourceConstructor,
   FeatWebClientConfig,
   FlagEventMap,
   Reason,

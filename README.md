@@ -55,6 +55,19 @@ await client.setContext({
 
 `change` events fire per flag whose evaluated value flipped, after either a context change or a datafile refresh.
 
+## Live streaming
+
+The SDK can hold a Server-Sent Events connection so datafile changes land near-instantly instead of waiting for the next poll. On each update the data plane pushes the full datafile; the SDK adopts it in version order (no extra HTTP request) and fires `change` events.
+
+By default streaming **follows your subscription**: the stream opens when the first `change` listener is added and closes when the last one is removed, so a page that never listens pays nothing. Override with the `streaming` option:
+
+```ts
+new FeatWebClient({ apiKey, streaming: true });  // always stream, opens on ready
+new FeatWebClient({ apiKey, streaming: false }); // never stream
+```
+
+Polling stays on as a safety net in every mode, so a dropped stream still self-heals.
+
 ## OpenFeature
 
 ```ts
@@ -81,6 +94,7 @@ new FeatWebClient({ apiKey, bootstrap: serverProvidedDatafile });
 
 - Pre-evaluates every flag against the current context into a `Map` so `getValue` is synchronous.
 - Polls every 30 s by default; pauses while the tab is hidden and force-refreshes on visibility restore. Floored at 5 s.
+- Optional Server-Sent Events stream for near-instant updates (see [Live streaming](#live-streaming)); polling remains the fallback.
 - Cross-tab `BroadcastChannel` sync: when one tab fetches a new datafile, sibling tabs adopt it without their own network call.
 - 304-aware via `ETag` / `If-None-Match`.
 - `url` must use `https://` if you override it (the constructor rejects plaintext URLs except `http://localhost` for tests).
