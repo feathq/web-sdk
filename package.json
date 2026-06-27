@@ -1,6 +1,6 @@
 {
   "name": "@feathq/web-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "feat feature-flag SDK for browsers. Polling client + sync evaluation cache. Pair with @feathq/openfeature-web for OpenFeature.",
   "keywords": [
     "feature-flags",
