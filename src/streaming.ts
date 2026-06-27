@@ -1,4 +1,21 @@
-import type { Datafile } from "@feathq/datafile-schema";
+import type { Datafile, FlagSpec, SegmentSpec } from "@feathq/datafile-schema";
+
+// An incremental datafile delta. The server emits a `patch` frame whenever a
+// change can be expressed as a delta against a known prior version: `from` is
+// the version the patch applies on top of, `to` is the version it produces.
+// `flags` / `segments` carry added-or-changed entries; `removedFlags` /
+// `removedSegments` carry keys to drop. A patch is only safe to apply when the
+// client already holds version `from` (see FeatWebClient.applyPatch).
+export interface DatafilePatch {
+  from: number;
+  to: number;
+  etag: string;
+  generatedAt: string;
+  flags: Record<string, FlagSpec>;
+  removedFlags: string[];
+  segments: Record<string, SegmentSpec>;
+  removedSegments: string[];
+}
 
 // Minimal structural type for the slice of EventSource the SDK touches, so
 // the constructor can be injected in tests (and on non-browser hosts) without
@@ -25,11 +42,13 @@ export interface DatafileStreamOptions {
   apiKey: string;
   eventSourceCtor: EventSourceConstructor;
   onPut: (datafile: Datafile) => void;
+  onPatch: (patch: DatafilePatch) => void;
 }
 
 // Thin adapter over an EventSource connected to the server's datafile stream.
-// The server emits a `put` frame (the full datafile JSON) on connect and again
-// on every datafile change; heartbeat comment lines are swallowed by
+// The server emits a `put` frame (the full datafile JSON) on connect and a
+// `patch` frame (an incremental delta) for subsequent changes that can be
+// expressed as a delta; heartbeat comment lines are swallowed by
 // EventSource itself. Native EventSource auto-reconnects after a transient
 // drop, so this stays a thin wrapper and does not hand-roll reconnect; the
 // polling loop is the safety net if the stream can't recover.
@@ -56,6 +75,10 @@ export class DatafileStream {
     source.addEventListener("put", (ev: MessageEvent) => {
       const datafile = parsePut(ev.data);
       if (datafile) this.options.onPut(datafile);
+    });
+    source.addEventListener("patch", (ev: MessageEvent) => {
+      const patch = parsePatch(ev.data);
+      if (patch) this.options.onPatch(patch);
     });
     source.addEventListener("error", () => {
       // EventSource auto-reconnects after a transient drop (readyState stays
@@ -92,4 +115,43 @@ function parsePut(data: unknown): Datafile | null {
     // Ignore malformed frames.
   }
   return null;
+}
+
+// Parse a `patch` frame's data payload into a delta, tolerating anything
+// malformed. `from` and `to` must be integers and satisfy the wire invariant
+// `to > from` (they gate the apply); a frame that violates this (degenerate or
+// a replayed backwards patch) is dropped so it can never regress version/etag.
+// The collection fields default to empty so a payload that omits one is still
+// usable. Anything that fails these checks is dropped; the version guard in
+// applyPatch and the safety poll keep the client correct.
+function parsePatch(data: unknown): DatafilePatch | null {
+  if (typeof data !== "string") return null;
+  try {
+    const p = JSON.parse(data) as Record<string, unknown>;
+    if (!p || typeof p !== "object") return null;
+    if (!Number.isInteger(p.from) || !Number.isInteger(p.to)) return null;
+    if ((p.to as number) <= (p.from as number)) return null;
+    if (typeof p.etag !== "string" || typeof p.generatedAt !== "string") return null;
+    return {
+      from: p.from as number,
+      to: p.to as number,
+      etag: p.etag,
+      generatedAt: p.generatedAt,
+      flags: isRecord(p.flags) ? (p.flags as Record<string, FlagSpec>) : {},
+      removedFlags: isStringArray(p.removedFlags) ? p.removedFlags : [],
+      segments: isRecord(p.segments) ? (p.segments as Record<string, SegmentSpec>) : {},
+      removedSegments: isStringArray(p.removedSegments) ? p.removedSegments : [],
+    };
+  } catch {
+    // Ignore malformed frames.
+  }
+  return null;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === "string");
 }
