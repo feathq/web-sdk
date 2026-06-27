@@ -9,7 +9,7 @@ import {
   MIN_EVENTS_FLUSH_INTERVAL_MS,
 } from "./events";
 import { loadCachedDatafile, saveCachedDatafile } from "./persistence";
-import { DatafileStream, type EventSourceConstructor } from "./streaming";
+import { DatafileStream, type DatafilePatch, type EventSourceConstructor } from "./streaming";
 import { SDK_VERSION } from "./version";
 import type {
   ChangeEvent,
@@ -349,6 +349,44 @@ export class FeatWebClient {
     await this.recomputeCache();
   }
 
+  // Apply an incremental SSE `patch` in place. Version-gated and atomic: a
+  // patch is only adopted when its `from` exactly matches the version we
+  // currently hold, so a missed intermediate patch (a gap) or a duplicate is
+  // ignored rather than applied out of order. On a match we merge the changed
+  // flags/segments, drop the removed keys, advance version/etag/generatedAt to
+  // the patch's `to`, then recompute the cache and fire `change` exactly like a
+  // full update - no HTTP refetch. Advancing the etag keeps the conditional
+  // poll's If-None-Match fresh so the next safety poll gets a 304. Mirrors the
+  // `put` path's cache-write and broadcast so sibling tabs stay current.
+  private async applyPatch(patch: DatafilePatch): Promise<void> {
+    // A frame buffered before close() can still surface afterwards; drop it so
+    // a torn-down client can't be resurrected into mutating its cache.
+    if (this.closed) return;
+    const current = this.datafile;
+    if (!current || current.version !== patch.from) return;
+
+    const flags = { ...current.flags, ...patch.flags };
+    for (const key of patch.removedFlags) delete flags[key];
+    const segments = { ...current.segments, ...patch.segments };
+    for (const key of patch.removedSegments) delete segments[key];
+
+    const next: Datafile = {
+      ...current,
+      flags,
+      segments,
+      version: patch.to,
+      etag: patch.etag,
+      generatedAt: patch.generatedAt,
+    };
+    this.datafile = next;
+    this.etag = patch.etag;
+    if (this.config.cache) {
+      saveCachedDatafile(this.config.cache, { datafile: next, etag: patch.etag });
+    }
+    this.broadcast?.publish(next, patch.etag);
+    await this.recomputeCache();
+  }
+
   // Reconcile the SSE connection with the current streaming policy. Called
   // whenever an input to that policy changes: ready, a `change` (un)subscribe,
   // or close.
@@ -398,6 +436,14 @@ export class FeatWebClient {
         onPut: (datafile) => {
           void this.adoptDatafile(datafile, datafile.etag, true).catch((err: unknown) => {
             console.warn("feat: streamed datafile update failed:", messageOf(err));
+          });
+        },
+        // A `patch` carries an incremental delta. Apply it in place only when
+        // it builds on the version we currently hold; a gap is ignored and
+        // reconnect (which re-seeds a full `put`) plus the safety poll recover.
+        onPatch: (patch) => {
+          void this.applyPatch(patch).catch((err: unknown) => {
+            console.warn("feat: streamed datafile patch failed:", messageOf(err));
           });
         },
       });
