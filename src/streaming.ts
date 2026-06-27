@@ -118,8 +118,10 @@ function parsePut(data: unknown): Datafile | null {
 }
 
 // Parse a `patch` frame's data payload into a delta, tolerating anything
-// malformed. `from` and `to` must both be numbers (they gate the apply); the
-// collection fields default to empty so a payload that omits one is still
+// malformed. `from` and `to` must be integers and satisfy the wire invariant
+// `to > from` (they gate the apply); a frame that violates this (degenerate or
+// a replayed backwards patch) is dropped so it can never regress version/etag.
+// The collection fields default to empty so a payload that omits one is still
 // usable. Anything that fails these checks is dropped; the version guard in
 // applyPatch and the safety poll keep the client correct.
 function parsePatch(data: unknown): DatafilePatch | null {
@@ -127,11 +129,12 @@ function parsePatch(data: unknown): DatafilePatch | null {
   try {
     const p = JSON.parse(data) as Record<string, unknown>;
     if (!p || typeof p !== "object") return null;
-    if (typeof p.from !== "number" || typeof p.to !== "number") return null;
+    if (!Number.isInteger(p.from) || !Number.isInteger(p.to)) return null;
+    if ((p.to as number) <= (p.from as number)) return null;
     if (typeof p.etag !== "string" || typeof p.generatedAt !== "string") return null;
     return {
-      from: p.from,
-      to: p.to,
+      from: p.from as number,
+      to: p.to as number,
       etag: p.etag,
       generatedAt: p.generatedAt,
       flags: isRecord(p.flags) ? (p.flags as Record<string, FlagSpec>) : {},

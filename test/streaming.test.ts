@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Datafile, FlagSpec } from "@feathq/datafile-schema";
+import type { Datafile, FlagSpec, SegmentSpec } from "@feathq/datafile-schema";
 import { FeatWebClient } from "../src/client";
 import type { EventSourceConstructor, EventSourceLike } from "../src/streaming";
 import type { ChangeEvent } from "../src/types";
@@ -65,23 +65,32 @@ function boolFlag(key: string, defaultVariationId: "v-on" | "v-off"): FlagSpec {
   };
 }
 
+// A minimal segment spec, keyed however the test needs.
+function segment(key: string): SegmentSpec {
+  return { key, rules: [] };
+}
+
 // Build a well-formed `patch` frame. Collections default to empty; etag is
-// derived from `to` so tests can assert it advanced.
+// derived from `to` so tests can assert it advanced. `generatedAt` is
+// overridable so tests can assert it advanced too.
 function patchFrame(opts: {
   from: number;
   to: number;
   flags?: Record<string, FlagSpec>;
   removedFlags?: string[];
+  segments?: Record<string, SegmentSpec>;
+  removedSegments?: string[];
+  generatedAt?: string;
 }): Record<string, unknown> {
   return {
     from: opts.from,
     to: opts.to,
     etag: `etag-${opts.to}`,
-    generatedAt: new Date().toISOString(),
+    generatedAt: opts.generatedAt ?? new Date().toISOString(),
     flags: opts.flags ?? {},
     removedFlags: opts.removedFlags ?? [],
-    segments: {},
-    removedSegments: [],
+    segments: opts.segments ?? {},
+    removedSegments: opts.removedSegments ?? [],
   };
 }
 
@@ -670,5 +679,221 @@ describe("FeatWebClient streaming", () => {
       }
       warn.mockRestore();
     }
+  });
+
+  it("rejects a backwards patch (to <= from) without rolling version/etag back", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    const source = MockEventSource.instances[0]!;
+
+    // Advance to version 2 so a backwards patch has something to (try to) undo.
+    source.emitPatch(
+      patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-off") } }),
+    );
+    await flush();
+    expect(client.currentDatafile()?.version).toBe(2);
+    expect(client.getValue("hello-world", true)).toBe(false);
+
+    const changes: ChangeEvent[] = [];
+    client.on("change", (e) => changes.push(e));
+
+    // Degenerate / replayed backwards frame: to <= from. Dropped at parse, so
+    // it can never regress the held version or etag.
+    source.emitPatch(
+      patchFrame({ from: 2, to: 1, flags: { "hello-world": boolFlag("hello-world", "v-on") } }),
+    );
+    await flush();
+    // Equal endpoints (to === from) are dropped too.
+    source.emitPatch(
+      patchFrame({ from: 2, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-on") } }),
+    );
+    await flush();
+
+    expect(changes).toHaveLength(0);
+    expect(client.currentDatafile()?.version).toBe(2);
+    expect(client.currentDatafile()?.etag).toBe("etag-2");
+    expect(client.getValue("hello-world", true)).toBe(false);
+    client.close();
+  });
+
+  it("applies a segment delta: adds/changes a segment and removes another", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    expect(client.currentDatafile()?.segments).toEqual({});
+
+    const source = MockEventSource.instances[0]!;
+
+    // 1 -> 2: introduce two segments.
+    source.emitPatch(
+      patchFrame({
+        from: 1,
+        to: 2,
+        segments: { "seg-keep": segment("seg-keep"), "seg-drop": segment("seg-drop") },
+      }),
+    );
+    await flush();
+    expect(Object.keys(client.currentDatafile()!.segments).sort()).toEqual(["seg-drop", "seg-keep"]);
+
+    // 2 -> 3: change one segment and remove the other.
+    const changed: SegmentSpec = {
+      key: "seg-keep",
+      rules: [{ conditions: [] }],
+    };
+    source.emitPatch(
+      patchFrame({
+        from: 2,
+        to: 3,
+        segments: { "seg-keep": changed },
+        removedSegments: ["seg-drop"],
+      }),
+    );
+    await flush();
+
+    expect(client.currentDatafile()?.version).toBe(3);
+    expect(client.currentDatafile()?.segments["seg-drop"]).toBeUndefined();
+    expect(client.currentDatafile()?.segments["seg-keep"]).toEqual(changed);
+    client.close();
+  });
+
+  it("a patch is republished on the BroadcastChannel for sibling tabs", async () => {
+    const postMessage = vi.spyOn(BroadcastChannel.prototype, "postMessage");
+    const client = new FeatWebClient({
+      apiKey: "feat_cs_abc",
+      url: "https://dp.example.com",
+      context: { targetingKey: "u" },
+      // crossTabSync left on (default) so the rebuilt datafile should rebroadcast.
+      events: false,
+      fetch: baseFetch,
+      eventSource: mockCtor,
+      streaming: true,
+    });
+    await client.ready();
+    postMessage.mockClear();
+
+    MockEventSource.instances[0]!.emitPatch(
+      patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-off") } }),
+    );
+    await flush();
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const msg = postMessage.mock.calls[0]![0] as { type: string; datafile: Datafile };
+    expect(msg.type).toBe("datafile-update");
+    expect(msg.datafile.version).toBe(2);
+    expect(msg.datafile.flags["hello-world"]?.defaultVariationId).toBe("v-off");
+    client.close();
+    postMessage.mockRestore();
+  });
+
+  it("a patch advances generatedAt, not just version and etag", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    const before = client.currentDatafile()?.generatedAt;
+
+    const stamp = "2030-01-01T00:00:00.000Z";
+    MockEventSource.instances[0]!.emitPatch(
+      patchFrame({
+        from: 1,
+        to: 2,
+        flags: { "hello-world": boolFlag("hello-world", "v-off") },
+        generatedAt: stamp,
+      }),
+    );
+    await flush();
+
+    expect(client.currentDatafile()?.generatedAt).toBe(stamp);
+    expect(client.currentDatafile()?.generatedAt).not.toBe(before);
+    client.close();
+  });
+
+  it("ignores a patch that arrives before any datafile is held", async () => {
+    // Follow-subscription mode: a change listener opens the stream immediately,
+    // before ready() has seeded any datafile.
+    const client = makeClient();
+    const changes: ChangeEvent[] = [];
+    client.on("change", (e) => changes.push(e));
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(client.currentDatafile()).toBeNull();
+
+    // No held version to build on: the patch must be dropped, not adopted.
+    expect(() =>
+      MockEventSource.instances[0]!.emitPatch(
+        patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-off") } }),
+      ),
+    ).not.toThrow();
+    await flush();
+
+    expect(changes).toHaveLength(0);
+    expect(client.currentDatafile()).toBeNull();
+    client.close();
+  });
+
+  it("ignores a duplicate / already-applied patch (idempotent)", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    const source = MockEventSource.instances[0]!;
+
+    source.emitPatch(
+      patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-off") } }),
+    );
+    await flush();
+    expect(client.currentDatafile()?.version).toBe(2);
+
+    const changes: ChangeEvent[] = [];
+    client.on("change", (e) => changes.push(e));
+
+    // Re-deliver the exact same 1 -> 2 frame: `from` no longer matches the held
+    // version (now 2), so it is a no-op (to <= current.version).
+    source.emitPatch(
+      patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-on") } }),
+    );
+    await flush();
+
+    expect(changes).toHaveLength(0);
+    expect(client.currentDatafile()?.version).toBe(2);
+    expect(client.currentDatafile()?.etag).toBe("etag-2");
+    expect(client.getValue("hello-world", true)).toBe(false);
+    client.close();
+  });
+
+  it("survives a malformed patch frame: a subsequent valid patch still applies", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    const source = MockEventSource.instances[0]!;
+
+    // A malformed frame is dropped and must not wedge the stream.
+    source.emitRawPatch("{ not valid json");
+    await flush();
+    expect(client.currentDatafile()?.version).toBe(1);
+
+    // The very next valid patch applies normally.
+    source.emitPatch(
+      patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-off") } }),
+    );
+    await flush();
+
+    expect(client.currentDatafile()?.version).toBe(2);
+    expect(client.getValue("hello-world", true)).toBe(false);
+    client.close();
+  });
+
+  it("a patch delivered after close() does not mutate the cache or fire events", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    expect(client.getValue("hello-world", false)).toBe(true);
+
+    const source = MockEventSource.instances[0]!;
+    const changes: ChangeEvent[] = [];
+    client.on("change", (e) => changes.push(e));
+
+    client.close();
+    // A late patch from a still-buffered frame must not resurrect the client.
+    source.emitPatch(
+      patchFrame({ from: 1, to: 2, flags: { "hello-world": boolFlag("hello-world", "v-off") } }),
+    );
+    await flush();
+
+    expect(changes).toHaveLength(0);
+    expect(client.getValue("hello-world", false)).toBe(true);
+    expect(client.currentDatafile()?.version).toBe(1);
   });
 });
