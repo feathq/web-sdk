@@ -9,6 +9,7 @@ import {
   MIN_EVENTS_FLUSH_INTERVAL_MS,
 } from "./events";
 import { loadCachedDatafile, saveCachedDatafile } from "./persistence";
+import { DatafileStream, type EventSourceConstructor } from "./streaming";
 import { SDK_VERSION } from "./version";
 import type {
   ChangeEvent,
@@ -45,8 +46,17 @@ export class FeatWebClient {
   private visibilityHandler: (() => void) | null = null;
   private emitter = new Emitter<FlagEventMap>();
   private broadcast: DatafileBroadcast | null = null;
+  private stream: DatafileStream | null = null;
+  // The set of live `change` listeners. The streaming-follows-subscription
+  // policy keys off whether this is non-empty; tracking the listeners (rather
+  // than a counter) keeps the refcount correct whether the caller unsubscribes
+  // via the returned disposer or via off().
+  private changeListeners = new Set<(arg: ChangeEvent) => void>();
+  private started = false;
+  private warnedNoEventSource = false;
   private readonly summarizer: EventSummarizer | null;
   private readonly fetchImpl: typeof fetch;
+  private readonly eventSourceCtor: EventSourceConstructor | undefined;
   private readonly pollIntervalMs: number;
   private readonly url: string;
   private closed = false;
@@ -61,6 +71,11 @@ export class FeatWebClient {
     this.url = config.url ?? DEFAULT_URL;
     assertHttpsUrl(this.url);
     this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
+    this.eventSourceCtor =
+      config.eventSource ??
+      (typeof globalThis.EventSource !== "undefined"
+        ? (globalThis.EventSource as unknown as EventSourceConstructor)
+        : undefined);
     this.pollIntervalMs = Math.max(
       config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
       MIN_POLL_INTERVAL_MS,
@@ -180,11 +195,20 @@ export class FeatWebClient {
   }
 
   on<K extends keyof FlagEventMap>(event: K, listener: (arg: FlagEventMap[K]) => void): () => void {
-    return this.emitter.on(event, listener);
+    if (event !== "change") return this.emitter.on(event, listener);
+    // Track `change` subscriptions so streaming can follow them. Return a
+    // disposer that funnels through off() so the refcount stays correct.
+    this.emitter.on(event, listener);
+    this.changeListeners.add(listener as (arg: ChangeEvent) => void);
+    this.maybeUpdateStream();
+    return () => this.off(event, listener);
   }
 
   off<K extends keyof FlagEventMap>(event: K, listener: (arg: FlagEventMap[K]) => void): void {
     this.emitter.off(event, listener);
+    if (event === "change" && this.changeListeners.delete(listener as (arg: ChangeEvent) => void)) {
+      this.maybeUpdateStream();
+    }
   }
 
   // Force a one-shot fetch. Returns true if the in-memory datafile changed.
@@ -202,6 +226,9 @@ export class FeatWebClient {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.stream?.close();
+    this.stream = null;
+    this.changeListeners.clear();
     if (this.visibilityHandler && typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
       this.visibilityHandler = null;
@@ -223,6 +250,11 @@ export class FeatWebClient {
       this.startPolling();
       this.attachVisibilityHandler();
       this.summarizer?.start();
+      // Streaming is allowed from here on. `streaming: true` opens now;
+      // streaming-follows-subscription may already have opened it if a
+      // `change` listener was added before ready().
+      this.started = true;
+      this.maybeUpdateStream();
       this.emitter.emit("ready", undefined);
     } catch (err) {
       this.emitter.emit("failed", err instanceof Error ? err : new Error(String(err)));
@@ -287,17 +319,90 @@ export class FeatWebClient {
     return true;
   }
 
-  // Sibling-tab handler. Only adopt if the broadcast carries a newer
-  // version (or we have nothing); old broadcasts can race with our own
-  // fresh fetches and we don't want to regress.
+  // Sibling-tab handler. Adopt without republishing: this is the receive end
+  // of a BroadcastChannel message, so echoing it back would loop.
   private async adoptFromBroadcast(datafile: Datafile, etag: string | null): Promise<void> {
+    await this.adoptDatafile(datafile, etag, false);
+  }
+
+  // Version-guarded adopt for datafiles that arrive outside the fetch path
+  // (sibling-tab broadcast, SSE `put`). Only adopt a strictly newer version so
+  // an old broadcast or out-of-order frame can't regress us; the same guard
+  // stops a republished put from looping back through a sibling tab. When
+  // `publish` is set we mirror the fetch path and rebroadcast so sibling tabs
+  // stay fresh without their own network call.
+  private async adoptDatafile(
+    datafile: Datafile,
+    etag: string | null,
+    publish: boolean,
+  ): Promise<void> {
+    // A frame buffered before close() can still surface afterwards; drop it so
+    // a torn-down client can't be resurrected into mutating its cache.
+    if (this.closed) return;
     if (this.datafile && datafile.version <= this.datafile.version) return;
     this.datafile = datafile;
     this.etag = etag;
     if (this.config.cache) {
       saveCachedDatafile(this.config.cache, { datafile, etag });
     }
+    if (publish) this.broadcast?.publish(datafile, etag);
     await this.recomputeCache();
+  }
+
+  // Reconcile the SSE connection with the current streaming policy. Called
+  // whenever an input to that policy changes: ready, a `change` (un)subscribe,
+  // or close.
+  private maybeUpdateStream(): void {
+    if (this.closed) return;
+    const want = this.wantsStream();
+    if (want) {
+      // Idempotent: opens a stream if there isn't one, and reopens if a prior
+      // terminal error dropped the underlying EventSource (the wrapper nulls
+      // its source on CLOSED, so open() rebuilds it on the next policy change).
+      this.openStream();
+    } else if (this.stream) {
+      this.stream.close();
+      this.stream = null;
+    }
+  }
+
+  private wantsStream(): boolean {
+    // false: never; true: always (once ready); undefined: follow subscription.
+    if (this.config.streaming === false) return false;
+    if (this.config.streaming === true) return this.started;
+    return this.changeListeners.size > 0;
+  }
+
+  private openStream(): void {
+    if (!this.eventSourceCtor) {
+      // No EventSource on this host (e.g. SSR / older runtime): polling carries
+      // the load. Warn once when streaming was actually wanted so the omission
+      // isn't silent, then let maybeUpdateStream() retry on later policy
+      // changes (a host that gains EventSource is not expected, but harmless).
+      if (!this.warnedNoEventSource) {
+        this.warnedNoEventSource = true;
+        console.warn("feat: streaming requested but EventSource is unavailable; using polling");
+      }
+      return;
+    }
+    if (!this.stream) {
+      this.stream = new DatafileStream({
+        url: this.url,
+        apiKey: this.config.apiKey,
+        eventSourceCtor: this.eventSourceCtor,
+        // A `put` carries the full datafile; reuse the version-ordered adopt
+        // path so a duplicate or out-of-order frame is ignored and the cache
+        // recomputes (firing `change`) only on a strictly newer version. Like
+        // the fetch path, a stream-adopted put republishes on the
+        // BroadcastChannel so sibling tabs stay fresh without their own fetch.
+        onPut: (datafile) => {
+          void this.adoptDatafile(datafile, datafile.etag, true).catch((err: unknown) => {
+            console.warn("feat: streamed datafile update failed:", messageOf(err));
+          });
+        },
+      });
+    }
+    this.stream.open();
   }
 
   // Pre-evaluate every flag in the datafile against the current context
