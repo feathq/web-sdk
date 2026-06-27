@@ -53,6 +53,7 @@ export class FeatWebClient {
   // via the returned disposer or via off().
   private changeListeners = new Set<(arg: ChangeEvent) => void>();
   private started = false;
+  private warnedNoEventSource = false;
   private readonly summarizer: EventSummarizer | null;
   private readonly fetchImpl: typeof fetch;
   private readonly eventSourceCtor: EventSourceConstructor | undefined;
@@ -318,16 +319,33 @@ export class FeatWebClient {
     return true;
   }
 
-  // Sibling-tab handler. Only adopt if the broadcast carries a newer
-  // version (or we have nothing); old broadcasts can race with our own
-  // fresh fetches and we don't want to regress.
+  // Sibling-tab handler. Adopt without republishing: this is the receive end
+  // of a BroadcastChannel message, so echoing it back would loop.
   private async adoptFromBroadcast(datafile: Datafile, etag: string | null): Promise<void> {
+    await this.adoptDatafile(datafile, etag, false);
+  }
+
+  // Version-guarded adopt for datafiles that arrive outside the fetch path
+  // (sibling-tab broadcast, SSE `put`). Only adopt a strictly newer version so
+  // an old broadcast or out-of-order frame can't regress us; the same guard
+  // stops a republished put from looping back through a sibling tab. When
+  // `publish` is set we mirror the fetch path and rebroadcast so sibling tabs
+  // stay fresh without their own network call.
+  private async adoptDatafile(
+    datafile: Datafile,
+    etag: string | null,
+    publish: boolean,
+  ): Promise<void> {
+    // A frame buffered before close() can still surface afterwards; drop it so
+    // a torn-down client can't be resurrected into mutating its cache.
+    if (this.closed) return;
     if (this.datafile && datafile.version <= this.datafile.version) return;
     this.datafile = datafile;
     this.etag = etag;
     if (this.config.cache) {
       saveCachedDatafile(this.config.cache, { datafile, etag });
     }
+    if (publish) this.broadcast?.publish(datafile, etag);
     await this.recomputeCache();
   }
 
@@ -337,9 +355,12 @@ export class FeatWebClient {
   private maybeUpdateStream(): void {
     if (this.closed) return;
     const want = this.wantsStream();
-    if (want && !this.stream) {
+    if (want) {
+      // Idempotent: opens a stream if there isn't one, and reopens if a prior
+      // terminal error dropped the underlying EventSource (the wrapper nulls
+      // its source on CLOSED, so open() rebuilds it on the next policy change).
       this.openStream();
-    } else if (!want && this.stream) {
+    } else if (this.stream) {
       this.stream.close();
       this.stream = null;
     }
@@ -353,22 +374,35 @@ export class FeatWebClient {
   }
 
   private openStream(): void {
-    // No EventSource on this host (e.g. SSR / older runtime): polling carries
-    // the load. maybeUpdateStream() will retry on the next policy change.
-    if (!this.eventSourceCtor) return;
-    const stream = new DatafileStream({
-      url: this.url,
-      apiKey: this.config.apiKey,
-      eventSourceCtor: this.eventSourceCtor,
-      // A `put` carries the full datafile; reuse the version-ordered adopt
-      // path so a duplicate or out-of-order frame is ignored and the cache
-      // recomputes (firing `change`) only on a strictly newer version.
-      onPut: (datafile) => {
-        void this.adoptFromBroadcast(datafile, datafile.etag);
-      },
-    });
-    stream.open();
-    this.stream = stream;
+    if (!this.eventSourceCtor) {
+      // No EventSource on this host (e.g. SSR / older runtime): polling carries
+      // the load. Warn once when streaming was actually wanted so the omission
+      // isn't silent, then let maybeUpdateStream() retry on later policy
+      // changes (a host that gains EventSource is not expected, but harmless).
+      if (!this.warnedNoEventSource) {
+        this.warnedNoEventSource = true;
+        console.warn("feat: streaming requested but EventSource is unavailable; using polling");
+      }
+      return;
+    }
+    if (!this.stream) {
+      this.stream = new DatafileStream({
+        url: this.url,
+        apiKey: this.config.apiKey,
+        eventSourceCtor: this.eventSourceCtor,
+        // A `put` carries the full datafile; reuse the version-ordered adopt
+        // path so a duplicate or out-of-order frame is ignored and the cache
+        // recomputes (firing `change`) only on a strictly newer version. Like
+        // the fetch path, a stream-adopted put republishes on the
+        // BroadcastChannel so sibling tabs stay fresh without their own fetch.
+        onPut: (datafile) => {
+          void this.adoptDatafile(datafile, datafile.etag, true).catch((err: unknown) => {
+            console.warn("feat: streamed datafile update failed:", messageOf(err));
+          });
+        },
+      });
+    }
+    this.stream.open();
   }
 
   // Pre-evaluate every flag in the datafile against the current context

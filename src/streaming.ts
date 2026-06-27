@@ -2,11 +2,18 @@ import type { Datafile } from "@feathq/datafile-schema";
 
 // Minimal structural type for the slice of EventSource the SDK touches, so
 // the constructor can be injected in tests (and on non-browser hosts) without
-// depending on the full DOM EventSource shape.
+// depending on the full DOM EventSource shape. `readyState` lets the wrapper
+// tell a transient drop (EventSource auto-reconnects) from a terminal failure
+// (it goes to CLOSED and stays there).
 export interface EventSourceLike {
+  readyState: number;
   addEventListener(type: string, listener: (ev: MessageEvent) => void): void;
   close(): void;
 }
+
+// EventSource.CLOSED. Inlined so the wrapper doesn't depend on the global
+// constant being present on non-browser hosts.
+const EVENT_SOURCE_CLOSED = 2;
 
 export type EventSourceConstructor = new (
   url: string,
@@ -20,17 +27,18 @@ export interface DatafileStreamOptions {
   onPut: (datafile: Datafile) => void;
 }
 
-// Thin adapter over an EventSource connected to the data plane's datafile
-// stream. The data plane emits a `put` frame (the full datafile JSON) on
-// connect and again on every datafile change; heartbeat comment lines are
-// swallowed by EventSource itself. Native EventSource auto-reconnects, so
-// this stays a thin wrapper and does not hand-roll reconnect; the polling
-// loop is the safety net if the stream can't recover.
+// Thin adapter over an EventSource connected to the server's datafile stream.
+// The server emits a `put` frame (the full datafile JSON) on connect and again
+// on every datafile change; heartbeat comment lines are swallowed by
+// EventSource itself. Native EventSource auto-reconnects after a transient
+// drop, so this stays a thin wrapper and does not hand-roll reconnect; the
+// polling loop is the safety net if the stream can't recover.
 //
 // Browsers can't set request headers on EventSource, so the client_side_id
 // key travels in the query string; the Origin header is sent automatically.
 export class DatafileStream {
   private source: EventSourceLike | null = null;
+  private warned = false;
   private readonly options: DatafileStreamOptions;
 
   constructor(options: DatafileStreamOptions) {
@@ -49,10 +57,20 @@ export class DatafileStream {
       const datafile = parsePut(ev.data);
       if (datafile) this.options.onPut(datafile);
     });
-    // EventSource reconnects on its own after a transient drop; swallow the
-    // error so it doesn't surface as an unhandled event. Polling covers any
-    // window where the stream is down.
-    source.addEventListener("error", () => {});
+    source.addEventListener("error", () => {
+      // EventSource auto-reconnects after a transient drop (readyState stays
+      // CONNECTING), so leave it be in that case. On a terminal HTTP failure
+      // (401/403/429) it goes to CLOSED and never reopens on its own; drop the
+      // dead source so a later policy change (e.g. a new change-subscription)
+      // can open a fresh stream. Polling carries the load in the meantime.
+      if (!this.warned) {
+        this.warned = true;
+        console.warn("feat: datafile stream error; falling back to polling");
+      }
+      if (this.source && this.source.readyState === EVENT_SOURCE_CLOSED) {
+        this.close();
+      }
+    });
   }
 
   close(): void {

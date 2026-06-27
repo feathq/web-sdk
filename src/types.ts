@@ -58,7 +58,7 @@ export interface FeatWebClientConfig {
   // Fetch override for tests / non-browser hosts. Defaults to
   // globalThis.fetch.
   fetch?: typeof fetch;
-  // Live datafile streaming over Server-Sent Events. The data plane pushes
+  // Live datafile streaming over Server-Sent Events. The server pushes
   // the full datafile on every change and the SDK adopts it in version order
   // (no HTTP refetch), so `change` events fire near-instantly instead of on
   // the poll interval. Three modes:

@@ -57,7 +57,7 @@ await client.setContext({
 
 ## Live streaming
 
-The SDK can hold a Server-Sent Events connection so datafile changes land near-instantly instead of waiting for the next poll. On each update the data plane pushes the full datafile; the SDK adopts it in version order (no extra HTTP request) and fires `change` events.
+The SDK can hold a Server-Sent Events connection so datafile changes land near-instantly instead of waiting for the next poll. On each update the server pushes the full datafile; the SDK adopts it in version order (no extra HTTP request) and fires `change` events.
 
 By default streaming **follows your subscription**: the stream opens when the first `change` listener is added and closes when the last one is removed, so a page that never listens pays nothing. Override with the `streaming` option:
 

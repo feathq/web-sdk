@@ -3,16 +3,16 @@ import type { ContextKindObject, EvalContext } from "./types";
 export const DEFAULT_EVENTS_FLUSH_INTERVAL_MS = 60_000;
 export const MIN_EVENTS_FLUSH_INTERVAL_MS = 5_000;
 
-// Cap a single request at the data plane's per-batch limit; anything beyond
+// Cap a single request at the server's per-batch limit; anything beyond
 // drains on the next flush.
 const MAX_BATCH = 2000;
 // Safety bound on the in-memory buffer so a pathological caller (or a long
 // outage) can't grow it without limit. New pairs are dropped past this; the
-// data plane dedups monthly so losing some is harmless, not double-counted.
+// server dedups monthly so losing some is harmless, not double-counted.
 const MAX_BUFFERED_PAIRS = 100_000;
 
-// Pull unique (kind, key) pairs from an evaluation context. Mirrors the data
-// plane's extraction (top-level `targetingKey` is the `user` key; every other
+// Pull unique (kind, key) pairs from an evaluation context. Mirrors the
+// server's extraction (top-level `targetingKey` is the `user` key; every other
 // object with a string `key` is its own kind) so the pairs line up with what
 // the meter expects.
 export function extractContextPairs(context: EvalContext): { kind: string; key: string }[] {
@@ -45,7 +45,7 @@ export interface EventSummarizerOptions {
   apiKey: string;
   fetchImpl: typeof fetch;
   // Browsers forbid setting User-Agent on fetch, so the SDK identifies itself
-  // with a custom header (allowlisted in the data plane's CORS config).
+  // with a custom header (allowlisted in the server's CORS config).
   sdkHeader: string;
   flushIntervalMs: number;
 }
@@ -61,7 +61,7 @@ export interface EventSummarizerOptions {
 // hook replaces the server SDK's process-exit flush. sendBeacon is NOT used:
 // it cannot carry the Authorization bearer the events endpoint requires.
 //
-// The buffer is per-flush-window (cleared on success); the data plane owns
+// The buffer is per-flush-window (cleared on success); the server owns
 // month-scope dedup, so a context seen across two windows is sent in both and
 // deduped there.
 export class EventSummarizer {

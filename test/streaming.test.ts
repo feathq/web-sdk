@@ -69,6 +69,8 @@ const baseFetch = (async () => ({
 class MockEventSource implements EventSourceLike {
   url: string;
   closed = false;
+  // Mirrors EventSource.readyState: 0 CONNECTING, 1 OPEN, 2 CLOSED.
+  readyState = 1;
   private listeners = new Map<string, ((ev: MessageEvent) => void)[]>();
 
   constructor(url: string) {
@@ -86,15 +88,31 @@ class MockEventSource implements EventSourceLike {
 
   close(): void {
     this.closed = true;
+    this.readyState = 2;
   }
 
   emitPut(datafile: Datafile): void {
+    this.emitRawPut(JSON.stringify(datafile));
+  }
+
+  // Drive an arbitrary `put` payload, including malformed (non-JSON) frames.
+  emitRawPut(data: string): void {
     for (const l of this.listeners.get("put") ?? []) {
-      l({ data: JSON.stringify(datafile) } as MessageEvent);
+      l({ data } as MessageEvent);
     }
   }
 
-  emitError(): void {
+  // Transient drop: EventSource stays CONNECTING and reconnects on its own.
+  emitTransientError(): void {
+    this.readyState = 0;
+    for (const l of this.listeners.get("error") ?? []) {
+      l({} as MessageEvent);
+    }
+  }
+
+  // Terminal failure (e.g. 401/403/429): EventSource goes to CLOSED for good.
+  emitTerminalError(): void {
+    this.readyState = 2;
     for (const l of this.listeners.get("error") ?? []) {
       l({} as MessageEvent);
     }
@@ -248,11 +266,129 @@ describe("FeatWebClient streaming", () => {
     client.close();
   });
 
-  it("swallows stream errors (polling is the safety net)", async () => {
+  it("swallows a transient stream error and warns once (polling is the safety net)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const client = makeClient(true);
     await client.ready();
-    expect(() => MockEventSource.instances[0]!.emitError()).not.toThrow();
+    const source = MockEventSource.instances[0]!;
+    expect(() => source.emitTransientError()).not.toThrow();
+    // Transient: EventSource reconnects on its own, so the wrapper keeps it.
+    expect(source.closed).toBe(false);
+    // A second transient error does not warn again.
+    source.emitTransientError();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("feat: datafile stream error; falling back to polling");
     client.close();
+    warn.mockRestore();
+  });
+
+  it("malformed put frames are ignored: datafile, cache, and listeners untouched", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    expect(client.getValue("hello-world", false)).toBe(true);
+
+    const changes: ChangeEvent[] = [];
+    client.on("change", (e) => changes.push(e));
+    const source = MockEventSource.instances[0]!;
+
+    source.emitRawPut("not json at all");
+    source.emitRawPut("{ broken");
+    source.emitRawPut(JSON.stringify({ flags: {} })); // no numeric version
+    source.emitRawPut(JSON.stringify({ ...BASE_DATAFILE, version: "2" })); // version not a number
+    await flush();
+
+    expect(changes).toHaveLength(0);
+    expect(client.getValue("hello-world", false)).toBe(true);
+    expect(client.currentDatafile()?.version).toBe(1);
+    client.close();
+  });
+
+  it("a terminal stream error nulls the source so a later re-subscribe opens a fresh stream", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient(); // follow-subscription mode
+    await client.ready();
+
+    client.on("change", () => {});
+    expect(MockEventSource.instances).toHaveLength(1);
+    const first = MockEventSource.instances[0]!;
+
+    // Terminal failure: EventSource is CLOSED and will not reopen on its own.
+    first.emitTerminalError();
+    expect(first.closed).toBe(true);
+
+    // Polling still works: a fetch picks up a newer datafile.
+    expect(client.getValue("hello-world", false)).toBe(true);
+
+    // Re-subscribe (a new change listener) drives a policy change, which must
+    // open a fresh EventSource rather than reuse the dead one.
+    client.on("change", () => {});
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1]!.closed).toBe(false);
+    client.close();
+    warn.mockRestore();
+  });
+
+  it("reopens a fresh stream after the last listener tears it down", async () => {
+    const client = makeClient(); // follow-subscription mode
+    await client.ready();
+
+    const dispose = client.on("change", () => {});
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    // Last listener removed: stream closes.
+    dispose();
+    expect(MockEventSource.instances[0]!.closed).toBe(true);
+
+    // New listener: a brand-new EventSource, not the closed one.
+    client.on("change", () => {});
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1]!.closed).toBe(false);
+    client.close();
+  });
+
+  it("a stream-adopted put is republished on the BroadcastChannel for sibling tabs", async () => {
+    const postMessage = vi.spyOn(BroadcastChannel.prototype, "postMessage");
+    const client = new FeatWebClient({
+      apiKey: "feat_cs_abc",
+      url: "https://dp.example.com",
+      context: { targetingKey: "u" },
+      // crossTabSync left on (default) so the stream put should rebroadcast.
+      events: false,
+      fetch: baseFetch,
+      eventSource: mockCtor,
+      streaming: true,
+    });
+    await client.ready();
+    postMessage.mockClear();
+
+    MockEventSource.instances[0]!.emitPut(flippedAtVersion(2));
+    await flush();
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const msg = postMessage.mock.calls[0]![0] as { type: string; datafile: Datafile };
+    expect(msg.type).toBe("datafile-update");
+    expect(msg.datafile.version).toBe(2);
+    client.close();
+    postMessage.mockRestore();
+  });
+
+  it("a put delivered after close() does not mutate the cache or fire events", async () => {
+    const client = makeClient(true);
+    await client.ready();
+    expect(client.getValue("hello-world", false)).toBe(true);
+
+    const source = MockEventSource.instances[0]!;
+    const changes: ChangeEvent[] = [];
+    client.on("change", (e) => changes.push(e));
+
+    client.close();
+    // A late put from a still-buffered frame must not resurrect the client.
+    source.emitPut(flippedAtVersion(2));
+    await flush();
+
+    expect(changes).toHaveLength(0);
+    expect(client.getValue("hello-world", false)).toBe(true);
+    expect(client.currentDatafile()?.version).toBe(1);
   });
 
   it("close() tears down the stream", async () => {
@@ -263,9 +399,10 @@ describe("FeatWebClient streaming", () => {
     expect(MockEventSource.instances[0]!.closed).toBe(true);
   });
 
-  it("does not open a stream when no EventSource is available", async () => {
+  it("warns once and falls back to polling when no EventSource is available", async () => {
     // Simulate a host (SSR / older runtime) with no EventSource and no
     // override: the client should fall back to polling without throwing.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const original = (globalThis as { EventSource?: unknown }).EventSource;
     delete (globalThis as { EventSource?: unknown }).EventSource;
     try {
@@ -279,13 +416,18 @@ describe("FeatWebClient streaming", () => {
         streaming: true,
       });
       await client.ready();
-      // Polling carries the load; nothing to assert beyond "did not throw".
+      // Polling carries the load; the omission is surfaced exactly once.
       expect(client.currentDatafile()?.version).toBe(1);
+      expect(warn).toHaveBeenCalledWith(
+        "feat: streaming requested but EventSource is unavailable; using polling",
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
       client.close();
     } finally {
       if (original !== undefined) {
         (globalThis as { EventSource?: unknown }).EventSource = original;
       }
+      warn.mockRestore();
     }
   });
 });
